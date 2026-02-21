@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CEnT@CASA Telegram Monitör
+CEnT@HOME Telegram Monitör
 Sayfa her dakika kontrol edilir, yer açılırsa bildirim gelir.
 """
 
@@ -8,12 +8,13 @@ import time
 import logging
 import requests
 from bs4 import BeautifulSoup
-from config import BOT_TOKEN, CHAT_ID, URL, INTERVAL, ONLY_CASA, REPEAT
+from config import BOT_TOKEN, CHAT_ID, URL, INTERVAL, ONLY_HOME, REPEAT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger()
 
-KAPALI = {"POSTI ESAURITI", "ISCRIZIONI CONCLUSE", "ISCRIZIONI CHIUSE"}
+# "AVAILABLE SEATS" = yer var, geri kalan her şey kapalı
+ACIK = "AVAILABLE SEATS"
 bildirildi = set()
 
 
@@ -45,9 +46,9 @@ def satirlari_bul(html):
         if len(td) < 8:
             continue
         tip = td[0].upper()
-        if "CENT@CASA" not in tip and "CENT@UNI" not in tip:
+        if "CENT@HOME" not in tip and "CENT@UNI" not in tip:
             continue
-        if ONLY_CASA and "CENT@CASA" not in tip:
+        if ONLY_HOME and "CENT@HOME" not in tip:
             continue
         satirlar.append({
             "uni": td[1], "sehir": td[3], "kayit_bitis": td[4],
@@ -67,7 +68,7 @@ def kontrol():
     for s in satirlar:
         anahtar = f"{s['uni']}|{s['sinav']}"
 
-        if s["durum"].upper().strip() not in KAPALI and anahtar not in bildirildi:
+        if ACIK in s["durum"].upper().strip() and anahtar not in bildirildi:
             mesaj = (
                 "🚨🚨🚨 <b>YER AÇILDI!</b> 🚨🚨🚨\n\n"
                 f"🏫 <b>{s['uni']}</b>\n"

@@ -10,8 +10,8 @@ URL = "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese"
 # Kaç saniyede bir kontrol
 INTERVAL = 60
 
-# Sadece CENT@CASA mı
-ONLY_CASA = True
+# Sadece CENT@HOME mı
+ONLY_HOME = True
 
 # Yer açılınca kaç kez bildirim
 REPEAT = 3
