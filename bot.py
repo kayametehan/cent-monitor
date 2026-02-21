@@ -2,24 +2,20 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import traceback
-import time
-from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
+# ── Ayarlar ──────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8575472491:AAGMQ1g34d9tS1TD0rYOw2s2r0WRlunIt8M")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "120"))
 
 URL = "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese"
 
-UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED", "NO SEATS", "NOT AVAILABLE", "MEVCUT DEĞİL", "YER YOK"}
+UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED"}
 
 already_notified = set()
 subscribers = set()
-start_time = time.time()
-last_manual_check = None
-last_auto_check = None
-last_positive = None
+monitoring = True
 
 
 def main_menu():
@@ -41,13 +37,13 @@ def check_seats():
         resp = requests.get(URL, headers=headers, timeout=30)
         resp.raise_for_status()
     except Exception as e:
-        print(f"[HATA] Sayfa cekilemedi: {e}")
+        print(f"[HATA] Sayfa çekilemedi: {e}")
         return results
 
     soup = BeautifulSoup(resp.text, "html.parser")
     table = soup.find("table", {"id": "calendario"})
     if not table:
-        print("[HATA] Tablo bulunamadi")
+        print("[HATA] Tablo bulunamadı")
         return results
 
     for row in table.find_all("tr"):
@@ -64,43 +60,36 @@ def check_seats():
         city = cols[3].get_text(strip=True)
         deadline = cols[4].get_text(strip=True)
         seats = cols[5].get_text(strip=True)
-        state = cols[6].get_text(strip=True).upper()
+        # durum hücresi (metin + olası link)
+        state_cell = cols[6]
+        state = state_cell.get_text(strip=True).upper()
+        link_tag = state_cell.find('a')
+        link = link_tag['href'] if link_tag and link_tag.has_attr('href') else None
         test_date = cols[7].get_text(strip=True)
         available = not any(s in state for s in UNAVAILABLE)
 
         results.append({
-            "university": university, "city": city, "region": region,
-            "deadline": deadline, "seats": seats, "state": state,
-            "test_date": test_date, "available": available,
+            "university": university,
+            "city": city,
+            "region": region,
+            "deadline": deadline,
+            "seats": seats,
+            "state": state,
+            "test_date": test_date,
+            "available": available,
+            "link": link,
         })
 
     return results
 
 
-def format_time(ts):
-    if not ts:
-        return "-"
-    return datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M:%S")
-
-
-def format_duration(seconds):
-    m, s = divmod(int(seconds), 60)
-    h, m = divmod(m, 60)
-    d, h = divmod(h, 24)
-    if d > 0:
-        return f"{d}g {h}sa {m}dk"
-    elif h > 0:
-        return f"{h}sa {m}dk"
-    else:
-        return f"{m}dk {s}s"
-
-
+# Otomatik kontrol
 async def auto_check(context: ContextTypes.DEFAULT_TYPE):
-    global last_auto_check, last_positive
-    if not subscribers:
+    global monitoring
+    if not monitoring or not subscribers:
         return
-    last_auto_check = time.time()
-    print(f"[*] Otomatik kontrol... ({len(subscribers)} abone)")
+
+    print(f"[*] Otomatik kontrol... aboneler: {len(subscribers)}")
     try:
         results = check_seats()
     except Exception as e:
@@ -108,78 +97,63 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
         return
 
     for r in results:
-        key = f"{r['university']}|{r['test_date']}"
         if not r["available"]:
-            already_notified.discard(key)
+            already_notified.discard(f"{r['university']}|{r['test_date']}")
             continue
+
+        key = f"{r['university']}|{r['test_date']}"
         if key in already_notified:
             continue
+
         already_notified.add(key)
-        last_positive = time.time()
         msg = (
             "🟢 <b>CENT@HOME YER AÇILDI!</b>\n\n"
             f"🏫 <b>{r['university']}</b>\n"
             f"📍 {r['city']}, {r['region']}\n"
             f"📅 Test: {r['test_date']}\n"
             f"📝 Son kayıt: {r['deadline']}\n"
-            f"💺 Kalan yer: {r['seats']}\n\n"
-            f"🔗 <a href='{URL}'>Sayfaya git!</a>"
+            f"💺 Kalan yer: {r['seats']}\n"
+            f"📌 Durum: {r['state']}\n\n"
         )
+        # link varsa ekle
+        if r.get('link'):
+            full_link = r['link']
+            # göreli linkleri tam URL'ye çevir
+            if full_link.startswith('/'):
+                full_link = 'https://testcisia.it' + full_link
+            msg += f"🔗 <a href='{full_link}'>Rezervasyon / Giriş</a>"
+        else:
+            msg += f"🔗 <a href='{URL}'>Takip sayfası</a>"
+
         for chat_id in list(subscribers):
             try:
-                await context.bot.send_message(
-                    chat_id=chat_id, text=msg,
-                    parse_mode="HTML", reply_markup=main_menu()
-                )
+                await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML", reply_markup=main_menu())
             except Exception as e:
-                print(f"[HATA] {chat_id} mesaj gonderilemedi: {e}")
-
-    # Olumlu bir şey varsa (state UNAVAILABLE değilse)
-    for r in results:
-        if r["available"]:
-            last_positive = time.time()
-            msg = (
-                "✅ <b>CENT@HOME için olumlu bir durum var!</b>\n\n"
-                f"🏫 <b>{r['university']}</b>\n"
-                f"📍 {r['city']}, {r['region']}\n"
-                f"📅 Test: {r['test_date']}\n"
-                f"📝 Son kayıt: {r['deadline']}\n"
-                f"💺 Kalan yer: {r['seats']}\n"
-                f"📌 Durum: {r['state']}\n\n"
-                f"🔗 <a href='{URL}'>Sayfaya git!</a>"
-            )
-            for chat_id in list(subscribers):
-                try:
-                    await context.bot.send_message(
-                        chat_id=chat_id, text=msg,
-                        parse_mode="HTML", reply_markup=main_menu()
-                    )
-                except Exception as e:
-                    print(f"[HATA] {chat_id} olumlu mesaj gonderilemedi: {e}")
+                print(f"[HATA] {chat_id} mesaj gönderilemedi: {e}")
 
 
+# /start
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     subscribers.add(chat_id)
-    print(f"[INFO] /start → chat_id: {chat_id} (toplam {len(subscribers)} abone)")
+    print(f"[INFO] /start → chat_id: {chat_id} (aboneler: {len(subscribers)})")
     try:
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
                 "🤖 <b>CENT@HOME Takip Botu</b>\n\n"
-                "✅ Bildirim almaya başladın!\n"
-                "Yer açılınca otomatik mesaj gelecek.\n\n"
+                "✅ Bildirim almaya başladın! Yer açılınca otomatik mesaj gelecek.\n\n"
                 "Tuşlarla kontrol et:"
             ),
             parse_mode="HTML",
-            reply_markup=main_menu()
+            reply_markup=main_menu(),
         )
     except Exception as e:
         print(f"[HATA] start: {e}")
 
 
+# Tuş tıklamaları
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global last_manual_check
     query = update.callback_query
     try:
         await query.answer()
@@ -191,47 +165,50 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     subscribers.add(chat_id)
 
     try:
-        if action == "check":
-            last_manual_check = time.time()
-            results = check_seats()
-            lines = []
-            for r in results:
-                if r["available"]:
-                    icon = "🟢"
-                    lines.append(
-                        f"{icon} <b>{r['university']}</b>\n"
-                        f"    📍 {r['city']} | 📅 {r['test_date']} | 💺 {r['seats']}\n"
-                        f"    <a href='{URL}'>Sayfa</a>"
-                    )
-                else:
-                    icon = "🔴"
-                    lines.append(
-                        f"{icon} <b>{r['university']}</b>\n"
-                        f"    📍 {r['city']} | 📅 {r['test_date']} | 💺 {r['seats']}\n"
-                        f"    <a href='{URL}'>Sayfa</a>"
-                    )
-            text = "📋 <b>CENT@HOME Durumu</b>\n\n" + "\n\n".join(lines)
-            # Tek bir mesajda sonucu ve tuşları göster
+        if action == 'check':
             try:
-                await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
+                await query.edit_message_text('🔍 Kontrol ediliyor...', parse_mode='HTML')
             except Exception:
-                await context.bot.edit_message_text(chat_id=chat_id, message_id=query.message.message_id, text=text, parse_mode="HTML", reply_markup=main_menu())
+                pass
 
-        elif action == "status":
-            uptime = format_duration(time.time() - start_time)
+            results = check_seats()
+            if not results:
+                text = '📋 <b>CENT@HOME</b>\n\nHiç CENT@HOME satırı bulunamadı.'
+            else:
+                lines = []
+                for r in results:
+                    icon = '🟢' if r['available'] else '🔴'
+                    line = (
+                        f"{icon} <b>{r['university']}</b>\n"
+                        f"    📍 {r['city']} | 📅 {r['test_date']} | 💺 {r['seats']}\n"
+                        f"    Durum: {r['state']}"
+                    )
+                    if r.get('link'):
+                        full_link = r['link']
+                        if full_link.startswith('/'):
+                            full_link = 'https://testcisia.it' + full_link
+                        line += f"\n    🔗 <a href='{full_link}'>Rezervasyon / Giriş</a>"
+                    lines.append(line)
+                text = '📋 <b>CENT@HOME Durumu</b>\n\n' + '\n\n'.join(lines)
+
+            try:
+                await query.edit_message_text(text, parse_mode='HTML', reply_markup=main_menu())
+            except Exception:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML', reply_markup=main_menu())
+
+        elif action == 'status':
+            st = '▶️ Aktif' if monitoring else '⏸ Durduruldu'
             text = (
                 f"📊 <b>Bot Durumu</b>\n\n"
-                f"Çalışma süresi: {uptime}\n"
-                f"Son manuel kontrol: {format_time(last_manual_check)}\n"
-                f"Son otomatik kontrol: {format_time(last_auto_check)}\n"
-                f"Son olumlu durum: {format_time(last_positive)}\n"
+                f"Takip: {st}\n"
+                f"Kontrol aralığı: {CHECK_INTERVAL}sn\n"
                 f"Abone sayısı: {len(subscribers)}\n"
                 f"Bildirim sayısı: {len(already_notified)}"
             )
             try:
-                await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
+                await query.edit_message_text(text, parse_mode='HTML', reply_markup=main_menu())
             except Exception:
-                await context.bot.edit_message_text(chat_id=chat_id, message_id=query.message.message_id, text=text, parse_mode="HTML", reply_markup=main_menu())
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML', reply_markup=main_menu())
 
     except Exception as e:
         print(f"[HATA] button: {traceback.format_exc()}")
@@ -242,21 +219,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    print("=" * 50)
-    print("  CENT@HOME Takip Botu")
-    print(f"  Kontrol: {CHECK_INTERVAL}sn")
-    print("=" * 50)
+    print('=' * 50)
+    print('  CENT@HOME Takip Botu')
+    print(f'  Kontrol: {CHECK_INTERVAL}sn')
+    print('=' * 50)
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("menu", cmd_start))
+    app.add_handler(CommandHandler('start', cmd_start))
+    app.add_handler(CommandHandler('menu', cmd_start))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     app.job_queue.run_repeating(auto_check, interval=CHECK_INTERVAL, first=10)
 
-    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    app.run_polling(drop_pending_updates=True)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
