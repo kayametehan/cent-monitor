@@ -1,37 +1,35 @@
 import requests
 from bs4 import BeautifulSoup
-import threading
 import os
+import traceback
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # ── Ayarlar ──────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8575472491:AAGMQ1g34d9tS1TD0rYOw2s2r0WRlunIt8M")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "-5039432883")
-CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "120"))  # saniye
+CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "120"))
 
 URL = "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese"
 
 UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED"}
 
 already_notified = set()
-monitoring = True  # takip açık/kapalı
+monitoring = True
 
 
-# ── Ana Menü ─────────────────────────────────────────────
 def main_menu():
     keyboard = [
         [InlineKeyboardButton("🔍 Şimdi Kontrol Et", callback_data="check")],
         [
-            InlineKeyboardButton("▶️ Başlat", callback_data="start"),
-            InlineKeyboardButton("⏸ Durdur", callback_data="stop"),
+            InlineKeyboardButton("▶️ Başlat", callback_data="start_mon"),
+            InlineKeyboardButton("⏸ Durdur", callback_data="stop_mon"),
         ],
         [InlineKeyboardButton("📊 Durum", callback_data="status")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
-# ── Site Kontrol ─────────────────────────────────────────
 def check_seats():
     results = []
     try:
@@ -43,12 +41,13 @@ def check_seats():
         resp = requests.get(URL, headers=headers, timeout=30)
         resp.raise_for_status()
     except Exception as e:
-        print(f"[HATA] {e}")
+        print(f"[HATA] Sayfa cekilemedi: {e}")
         return results
 
     soup = BeautifulSoup(resp.text, "html.parser")
     table = soup.find("table", {"id": "calendario"})
     if not table:
+        print("[HATA] Tablo bulunamadi")
         return results
 
     for row in table.find_all("tr"):
@@ -78,15 +77,18 @@ def check_seats():
     return results
 
 
-# ── Otomatik Kontrol (arka plan) ─────────────────────────
+# ── Otomatik kontrol ─────────────────────────────────────
 async def auto_check(context: ContextTypes.DEFAULT_TYPE):
     global monitoring
     if not monitoring:
         return
 
     print("[*] Otomatik kontrol...")
-    results = check_seats()
-    found = False
+    try:
+        results = check_seats()
+    except Exception as e:
+        print(f"[HATA] {e}")
+        return
 
     for r in results:
         if not r["available"]:
@@ -98,102 +100,135 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
             continue
 
         already_notified.add(key)
-        found = True
         msg = (
             "🟢 <b>CENT@HOME YER AÇILDI!</b>\n\n"
             f"🏫 <b>{r['university']}</b>\n"
             f"📍 {r['city']}, {r['region']}\n"
             f"📅 Test: {r['test_date']}\n"
             f"📝 Son kayıt: {r['deadline']}\n"
-            f"💺 Kalan yer: {r['seats']}\n"
-            f"📌 Durum: {r['state']}\n\n"
+            f"💺 Kalan yer: {r['seats']}\n\n"
             f"🔗 <a href='{URL}'>Hemen kayıt ol!</a>"
         )
-        await context.bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID, text=msg,
-            parse_mode="HTML", reply_markup=main_menu()
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID, text=msg,
+                parse_mode="HTML", reply_markup=main_menu()
+            )
+        except Exception as e:
+            print(f"[HATA] Mesaj gonderilemedi: {e}")
 
-    if not found:
-        print("[·] Açık yer yok.")
+    if not any(r["available"] for r in results):
+        print("[·] Acik yer yok.")
 
 
-# ── /start komutu ────────────────────────────────────────
+# ── /start & /menu ───────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 <b>CENT@HOME Takip Botu</b>\n\n"
-        "Aşağıdaki tuşlarla kontrol et:",
-        parse_mode="HTML", reply_markup=main_menu()
-    )
+    chat_id = update.effective_chat.id
+    print(f"[INFO] /start geldi, chat_id: {chat_id}")
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="🤖 <b>CENT@HOME Takip Botu</b>\n\nTuşlarla kontrol et:",
+            parse_mode="HTML",
+            reply_markup=main_menu()
+        )
+    except Exception as e:
+        print(f"[HATA] start: {e}")
 
 
-# ── Tuş Tıklamaları ─────────────────────────────────────
+# ── Tuş tıklamaları ─────────────────────────────────────
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global monitoring
     query = update.callback_query
-    await query.answer()
 
-    if query.data == "check":
-        await query.edit_message_text("🔍 Kontrol ediliyor...", parse_mode="HTML")
-        results = check_seats()
-        home_rows = [r for r in results if True]
+    # Hemen answer() — yoksa Telegram "yükleniyor" gösterir
+    try:
+        await query.answer()
+    except Exception:
+        pass
 
-        if not home_rows:
-            text = "📋 <b>CENT@HOME</b>\n\nHiç satır bulunamadı."
-        else:
-            lines = []
-            for r in home_rows:
-                icon = "🟢" if r["available"] else "🔴"
-                lines.append(
-                    f"{icon} <b>{r['university']}</b>\n"
-                    f"   📍 {r['city']} | 📅 {r['test_date']} | 💺 {r['seats']}"
-                )
-            text = "📋 <b>CENT@HOME Durumu</b>\n\n" + "\n\n".join(lines)
+    action = query.data
+    chat_id = query.message.chat_id
 
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
+    try:
+        if action == "check":
+            try:
+                await query.edit_message_text("🔍 Kontrol ediliyor...", parse_mode="HTML")
+            except Exception:
+                pass
 
-    elif query.data == "start":
-        monitoring = True
-        await query.edit_message_text(
-            "▶️ Takip <b>başlatıldı</b>! Her 2 dakikada kontrol edilecek.",
-            parse_mode="HTML", reply_markup=main_menu()
-        )
+            results = check_seats()
 
-    elif query.data == "stop":
-        monitoring = False
-        await query.edit_message_text(
-            "⏸ Takip <b>durduruldu</b>. Tekrar başlatmak için ▶️ bas.",
-            parse_mode="HTML", reply_markup=main_menu()
-        )
+            if not results:
+                text = "📋 <b>CENT@HOME</b>\n\nHiç CENT@HOME satırı bulunamadı."
+            else:
+                lines = []
+                for r in results:
+                    icon = "🟢" if r["available"] else "🔴"
+                    lines.append(
+                        f"{icon} <b>{r['university']}</b>\n"
+                        f"    📍 {r['city']} | 📅 {r['test_date']} | 💺 {r['seats']}"
+                    )
+                text = "📋 <b>CENT@HOME Durumu</b>\n\n" + "\n\n".join(lines)
 
-    elif query.data == "status":
-        status = "▶️ Aktif" if monitoring else "⏸ Durduruldu"
-        notified_count = len(already_notified)
-        await query.edit_message_text(
-            f"📊 <b>Bot Durumu</b>\n\n"
-            f"Takip: {status}\n"
-            f"Kontrol aralığı: {CHECK_INTERVAL}sn\n"
-            f"Bildirim gönderilen: {notified_count}",
-            parse_mode="HTML", reply_markup=main_menu()
-        )
+            try:
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
+            except Exception:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
+
+        elif action == "start_mon":
+            monitoring = True
+            text = "▶️ Takip <b>başlatıldı</b>! Her 2 dakikada kontrol edilecek."
+            try:
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
+            except Exception:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
+
+        elif action == "stop_mon":
+            monitoring = False
+            text = "⏸ Takip <b>durduruldu</b>. Tekrar başlatmak için ▶️ bas."
+            try:
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
+            except Exception:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
+
+        elif action == "status":
+            st = "▶️ Aktif" if monitoring else "⏸ Durduruldu"
+            text = (
+                f"📊 <b>Bot Durumu</b>\n\n"
+                f"Takip: {st}\n"
+                f"Kontrol aralığı: {CHECK_INTERVAL}sn\n"
+                f"Bildirim sayısı: {len(already_notified)}"
+            )
+            try:
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
+            except Exception:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
+
+    except Exception as e:
+        print(f"[HATA] button: {traceback.format_exc()}")
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=f"❌ Hata: {e}", reply_markup=main_menu())
+        except Exception:
+            pass
 
 
-# ── Ana ──────────────────────────────────────────────────
 def main():
     print("=" * 50)
-    print("  CENT@HOME Takip Botu Başlatıldı")
-    print(f"  Kontrol aralığı: {CHECK_INTERVAL} saniye")
+    print("  CENT@HOME Takip Botu")
+    print(f"  Chat ID: {TELEGRAM_CHAT_ID}")
+    print(f"  Kontrol: {CHECK_INTERVAL}sn")
     print("=" * 50)
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("menu", cmd_start))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Otomatik kontrol job'ı
     app.job_queue.run_repeating(auto_check, interval=CHECK_INTERVAL, first=10)
 
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
