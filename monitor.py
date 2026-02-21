@@ -15,8 +15,8 @@ log = logging.getLogger()
 
 # Açık durum anahtar kelimeleri — EN ve IT
 ACIK_KEYS = ["AVAILABLE SEATS", "ISCRIVITI", "POSTI DISPONIBILI"]
-# HOME tipi — EN ve IT
-HOME_KEYS = ["CENT@HOME", "CENT@CASA"]
+# HOME tipi
+HOME_KEYS = ["CENT@HOME"]
 
 bildirildi = set()
 

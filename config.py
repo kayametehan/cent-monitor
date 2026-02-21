@@ -17,7 +17,7 @@ URLs = [
 # Kaç saniyede bir kontrol
 INTERVAL = 60
 
-# Sadece CENT@HOME / CENT@CASA mı
+# Sadece CENT@HOME mı
 ONLY_HOME = True
 
 # Yer açılınca kaç kez bildirim
