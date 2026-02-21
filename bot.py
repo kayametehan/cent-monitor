@@ -211,10 +211,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"    <a href='{URL}'>Sayfa</a>"
                     )
             text = "📋 <b>CENT@HOME Durumu</b>\n\n" + "\n\n".join(lines)
+            # Tek bir mesajda sonucu ve tuşları göster
             try:
                 await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
             except Exception:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=query.message.message_id, text=text, parse_mode="HTML", reply_markup=main_menu())
 
         elif action == "status":
             uptime = format_duration(time.time() - start_time)
@@ -230,7 +231,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
             except Exception:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=query.message.message_id, text=text, parse_mode="HTML", reply_markup=main_menu())
 
     except Exception as e:
         print(f"[HATA] button: {traceback.format_exc()}")
