@@ -5,26 +5,20 @@ import traceback
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# ── Ayarlar ──────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8575472491:AAGMQ1g34d9tS1TD0rYOw2s2r0WRlunIt8M")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "120"))
 
 URL = "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese"
 
-UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED"}
+UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED", "NO SEATS", "NOT AVAILABLE", "MEVCUT DEĞİL", "YER YOK"}
 
 already_notified = set()
-monitoring = True
-subscribers = set()  # /start yapan herkes otomatik abone olur
+subscribers = set()
 
 
 def main_menu():
     keyboard = [
         [InlineKeyboardButton("🔍 Şimdi Kontrol Et", callback_data="check")],
-        [
-            InlineKeyboardButton("▶️ Başlat", callback_data="start_mon"),
-            InlineKeyboardButton("⏸ Durdur", callback_data="stop_mon"),
-        ],
         [InlineKeyboardButton("📊 Durum", callback_data="status")],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -77,10 +71,8 @@ def check_seats():
     return results
 
 
-# ── Otomatik kontrol ─────────────────────────────────────
 async def auto_check(context: ContextTypes.DEFAULT_TYPE):
-    global monitoring
-    if not monitoring or not subscribers:
+    if not subscribers:
         return
 
     print(f"[*] Otomatik kontrol... ({len(subscribers)} abone)")
@@ -91,11 +83,11 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
         return
 
     for r in results:
+        key = f"{r['university']}|{r['test_date']}"
         if not r["available"]:
-            already_notified.discard(f"{r['university']}|{r['test_date']}")
+            already_notified.discard(key)
             continue
 
-        key = f"{r['university']}|{r['test_date']}"
         if key in already_notified:
             continue
 
@@ -107,9 +99,8 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
             f"📅 Test: {r['test_date']}\n"
             f"📝 Son kayıt: {r['deadline']}\n"
             f"💺 Kalan yer: {r['seats']}\n\n"
-            f"🔗 <a href='{URL}'>Hemen kayıt ol!</a>"
+            f"🔗 <a href='{URL}'>Sayfaya git!</a>"
         )
-        # Tüm abonelere gönder
         for chat_id in list(subscribers):
             try:
                 await context.bot.send_message(
@@ -119,11 +110,29 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"[HATA] {chat_id} mesaj gonderilemedi: {e}")
 
-    if not any(r["available"] for r in results):
-        print("[·] Acik yer yok.")
+    # Olumlu bir şey varsa (state UNAVAILABLE değilse)
+    for r in results:
+        if r["available"]:
+            msg = (
+                "✅ <b>CENT@HOME için olumlu bir durum var!</b>\n\n"
+                f"🏫 <b>{r['university']}</b>\n"
+                f"📍 {r['city']}, {r['region']}\n"
+                f"📅 Test: {r['test_date']}\n"
+                f"📝 Son kayıt: {r['deadline']}\n"
+                f"💺 Kalan yer: {r['seats']}\n"
+                f"📌 Durum: {r['state']}\n\n"
+                f"🔗 <a href='{URL}'>Sayfaya git!</a>"
+            )
+            for chat_id in list(subscribers):
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id, text=msg,
+                        parse_mode="HTML", reply_markup=main_menu()
+                    )
+                except Exception as e:
+                    print(f"[HATA] {chat_id} olumlu mesaj gonderilemedi: {e}")
 
 
-# ── /start & /menu ───────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     subscribers.add(chat_id)
@@ -144,11 +153,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[HATA] start: {e}")
 
 
-# ── Tuş tıklamaları ─────────────────────────────────────
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global monitoring
     query = update.callback_query
-
     try:
         await query.answer()
     except Exception:
@@ -166,46 +172,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
             results = check_seats()
-
-            if not results:
-                text = "📋 <b>CENT@HOME</b>\n\nHiç CENT@HOME satırı bulunamadı."
-            else:
-                lines = []
-                for r in results:
-                    icon = "🟢" if r["available"] else "🔴"
+            lines = []
+            for r in results:
+                if r["available"]:
+                    icon = "🟢"
                     lines.append(
                         f"{icon} <b>{r['university']}</b>\n"
-                        f"    📍 {r['city']} | 📅 {r['test_date']} | 💺 {r['seats']}"
+                        f"    📍 {r['city']} | 📅 {r['test_date']} | 💺 {r['seats']}\n"
+                        f"    <a href='{URL}'>Sayfa</a>"
                     )
-                text = "📋 <b>CENT@HOME Durumu</b>\n\n" + "\n\n".join(lines)
-
-            try:
-                await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
-            except Exception:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
-
-        elif action == "start_mon":
-            monitoring = True
-            text = "▶️ Takip <b>başlatıldı</b>! Her 2 dakikada kontrol edilecek."
-            try:
-                await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
-            except Exception:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
-
-        elif action == "stop_mon":
-            monitoring = False
-            text = "⏸ Takip <b>durduruldu</b>. Tekrar başlatmak için ▶️ bas."
+                else:
+                    icon = "🔴"
+                    lines.append(
+                        f"{icon} <b>{r['university']}</b>\n"
+                        f"    📍 {r['city']} | 📅 {r['test_date']} | 💺 {r['seats']}\n"
+                        f"    <a href='{URL}'>Sayfa</a>"
+                    )
+            text = "📋 <b>CENT@HOME Durumu</b>\n\n" + "\n\n".join(lines)
             try:
                 await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
             except Exception:
                 await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
 
         elif action == "status":
-            st = "▶️ Aktif" if monitoring else "⏸ Durduruldu"
             text = (
                 f"📊 <b>Bot Durumu</b>\n\n"
-                f"Takip: {st}\n"
-                f"Kontrol aralığı: {CHECK_INTERVAL}sn\n"
                 f"Abone sayısı: {len(subscribers)}\n"
                 f"Bildirim sayısı: {len(already_notified)}"
             )
