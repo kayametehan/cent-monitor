@@ -6,7 +6,9 @@ Her iki dilde (EN + IT) kontrol eder, yer açılırsa bildirim gönderir.
 
 import time
 import logging
+import threading
 import requests
+from flask import Flask
 from bs4 import BeautifulSoup
 from config import BOT_TOKEN, CHAT_ID, URLs, INTERVAL, ONLY_HOME, REPEAT
 
@@ -19,6 +21,16 @@ ACIK_KEYS = ["AVAILABLE SEATS", "ISCRIVITI", "POSTI DISPONIBILI"]
 HOME_KEYS = ["CENT@HOME"]
 
 bildirildi = set()
+
+# ── Flask keep-alive (Render free tier uyumasın) ──
+app = Flask(__name__)
+
+@app.route("/")
+def health():
+    return "OK", 200
+
+def keep_alive():
+    app.run(host="0.0.0.0", port=10000, debug=False, use_reloader=False)
 
 
 def telegram(mesaj):
@@ -100,6 +112,9 @@ def kontrol():
 
 
 def main():
+    # Flask'ı arka planda başlat (Render ping'e cevap versin)
+    threading.Thread(target=keep_alive, daemon=True).start()
+
     log.info("Bot başladı — %d saniyede bir kontrol (EN + IT)", INTERVAL)
     telegram(f"🤖 <b>Bot aktif!</b>\nHer {INTERVAL}sn EN+IT kontrol.\n🔗 <a href=\"{URLs[0]}\">Sayfa</a>")
 
