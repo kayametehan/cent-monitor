@@ -10,7 +10,8 @@ CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "120"))  # saniye
 
 URL = "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese"
 
-UNAVAILABLE = {"POSTI ESAURITI", "ISCRIZIONI CONCLUSE", "ISCRIZIONI CHIUSE"}
+# İngilizce sayfadaki "yer yok" durumları
+UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED"}
 
 already_notified = set()
 
@@ -40,69 +41,72 @@ def check_seats():
         return
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    rows = soup.find_all("tr")
+    table = soup.find("table", {"id": "calendario"})
+    if not table:
+        print("[HATA] Tablo bulunamadı!")
+        return
 
+    rows = table.find_all("tr")
     found_any = False
 
     for row in rows:
         cols = row.find_all("td")
-        if len(cols) < 7:
+        if len(cols) < 8:
             continue
 
-        row_text = [c.get_text(strip=True) for c in cols]
-        tip = row_text[0].upper() if row_text[0] else ""
+        format_type = cols[0].get_text(strip=True).upper()
 
-        if "CENT@CASA" not in tip:
+        if "CENT@HOME" not in format_type:
             continue
 
-        universita = row_text[1]
-        regione = row_text[2]
-        citta = row_text[3]
-        data_iscrizione = row_text[4]
-        posti = row_text[5]
-        stato = row_text[6].upper().strip()
-        data_test = row_text[7] if len(row_text) > 7 else "?"
+        university = cols[1].get_text(strip=True)
+        region = cols[2].get_text(strip=True)
+        city = cols[3].get_text(strip=True)
+        booking_deadline = cols[4].get_text(strip=True)
+        seats = cols[5].get_text(strip=True)
+        state = cols[6].get_text(strip=True).upper()
+        test_date = cols[7].get_text(strip=True)
 
-        # Eğer yer kapalı/dolu değilse → bildirim gönder
-        is_available = not any(s in stato for s in UNAVAILABLE)
+        # Durum kontrol — yer kapalı mı?
+        is_available = not any(s in state for s in UNAVAILABLE)
 
-        key = f"{universita}|{data_test}"
+        key = f"{university}|{test_date}"
 
         if is_available:
             found_any = True
             if key not in already_notified:
                 already_notified.add(key)
                 msg = (
-                    "🟢 <b>CENT@CASA YER AÇILDI!</b>\n\n"
-                    f"🏫 <b>{universita}</b>\n"
-                    f"📍 {citta}, {regione}\n"
-                    f"📅 Test: {data_test}\n"
-                    f"📝 Kayıt kapanış: {data_iscrizione}\n"
-                    f"💺 Kalan yer: {posti}\n"
-                    f"📌 Durum: {stato}\n\n"
-                    f"🔗 <a href='{URL}'>Hemen bak!</a>"
+                    "🟢 <b>CENT@HOME YER AÇILDI!</b>\n\n"
+                    f"🏫 <b>{university}</b>\n"
+                    f"📍 {city}, {region}\n"
+                    f"📅 Test: {test_date}\n"
+                    f"📝 Son kayıt: {booking_deadline}\n"
+                    f"💺 Kalan yer: {seats}\n"
+                    f"📌 Durum: {state}\n\n"
+                    f"🔗 <a href='{URL}'>Hemen kayıt ol!</a>"
                 )
-                print(f"[!] YER AÇIK: {universita} - {data_test}")
+                print(f"[!] YER AÇIK: {university} - {test_date}")
                 send_telegram(msg)
         else:
-            # Tekrar kapanırsa listeden çıkar ki tekrar açılınca bildirim gelsin
+            # Tekrar kapanırsa listeden çıkar, tekrar açılınca bildirim gelsin
             already_notified.discard(key)
 
     if not found_any:
-        print("[·] CENT@CASA için açık yer yok.")
+        print("[·] CENT@HOME için açık yer yok.")
 
 
 def main():
     print("=" * 50)
-    print("  CENT@CASA Yer Takip Botu Başlatıldı")
+    print("  CENT@HOME Yer Takip Botu Başlatıldı")
     print(f"  Kontrol aralığı: {CHECK_INTERVAL} saniye")
     print("=" * 50)
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[HATA] TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID env değişkenlerini ayarla!")
+        print("[HATA] TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID env ayarla!")
         return
 
-    send_telegram("🤖 CENT@CASA Takip Botu aktif! Her 2 dakikada kontrol edilecek.")
+    send_telegram("🤖 CENT@HOME Takip Botu aktif! Her 2 dakikada kontrol edilecek.")
 
     while True:
         try:
