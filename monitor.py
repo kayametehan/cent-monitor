@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
 CEnT@HOME Telegram Monitör
-Sayfa her dakika kontrol edilir, yer açılırsa bildirim gelir.
+Her iki dilde (EN + IT) kontrol eder, yer açılırsa bildirim gönderir.
 """
 
 import time
 import logging
 import requests
 from bs4 import BeautifulSoup
-from config import BOT_TOKEN, CHAT_ID, URL, INTERVAL, ONLY_HOME, REPEAT
+from config import BOT_TOKEN, CHAT_ID, URLs, INTERVAL, ONLY_HOME, REPEAT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger()
 
-# "AVAILABLE SEATS" = yer var, geri kalan her şey kapalı
-ACIK = "AVAILABLE SEATS"
+# Açık durum anahtar kelimeleri — EN ve IT
+ACIK_KEYS = ["AVAILABLE SEATS", "ISCRIVITI", "POSTI DISPONIBILI"]
+# HOME tipi — EN ve IT
+HOME_KEYS = ["CENT@HOME", "CENT@CASA"]
+
 bildirildi = set()
 
 
@@ -29,12 +32,12 @@ def telegram(mesaj):
         log.error("Telegram hatası: %s", e)
 
 
-def sayfayi_cek():
+def sayfayi_cek(url):
     try:
-        r = requests.get(URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
         return r.text
     except Exception as e:
-        log.error("Sayfa hatası: %s", e)
+        log.error("Sayfa hatası (%s): %s", url, e)
         return None
 
 
@@ -46,9 +49,11 @@ def satirlari_bul(html):
         if len(td) < 8:
             continue
         tip = td[0].upper()
-        if "CENT@HOME" not in tip and "CENT@UNI" not in tip:
+        is_home = any(k in tip for k in HOME_KEYS)
+        is_uni = "CENT@UNI" in tip
+        if not is_home and not is_uni:
             continue
-        if ONLY_HOME and "CENT@HOME" not in tip:
+        if ONLY_HOME and not is_home:
             continue
         satirlar.append({
             "uni": td[1], "sehir": td[3], "kayit_bitis": td[4],
@@ -57,18 +62,26 @@ def satirlari_bul(html):
     return satirlar
 
 
+def durum_acik(durum_text):
+    """Durum metninin açık olup olmadığını kontrol et (EN veya IT)"""
+    d = durum_text.upper().strip()
+    return any(k in d for k in ACIK_KEYS)
+
+
 def kontrol():
-    html = sayfayi_cek()
-    if not html:
-        return
+    tum_satirlar = []
+    for url in URLs:
+        html = sayfayi_cek(url)
+        if not html:
+            continue
+        satirlar = satirlari_bul(html)
+        log.info("%s → %d satır", "EN" if "inglese" in url else "IT", len(satirlar))
+        tum_satirlar.extend(satirlar)
 
-    satirlar = satirlari_bul(html)
-    log.info("%d satır bulundu", len(satirlar))
-
-    for s in satirlar:
+    for s in tum_satirlar:
         anahtar = f"{s['uni']}|{s['sinav']}"
 
-        if ACIK in s["durum"].upper().strip() and anahtar not in bildirildi:
+        if durum_acik(s["durum"]) and anahtar not in bildirildi:
             mesaj = (
                 "🚨🚨🚨 <b>YER AÇILDI!</b> 🚨🚨🚨\n\n"
                 f"🏫 <b>{s['uni']}</b>\n"
@@ -77,7 +90,7 @@ def kontrol():
                 f"📝 Kayıt bitiş: {s['kayit_bitis']}\n"
                 f"💺 Yer: <b>{s['yer']}</b>\n"
                 f"📌 Durum: <b>{s['durum']}</b>\n\n"
-                f"🔗 <a href=\"{URL}\">HEMEN KAYIT OL!</a>"
+                f"🔗 <a href=\"{URLs[0]}\">HEMEN KAYIT OL!</a>"
             )
             for _ in range(REPEAT):
                 telegram(mesaj)
@@ -87,8 +100,8 @@ def kontrol():
 
 
 def main():
-    log.info("Bot başladı — %d saniyede bir kontrol", INTERVAL)
-    telegram(f"🤖 <b>Bot aktif!</b>\nHer {INTERVAL}sn kontrol ediliyor.\n🔗 <a href=\"{URL}\">Sayfa</a>")
+    log.info("Bot başladı — %d saniyede bir kontrol (EN + IT)", INTERVAL)
+    telegram(f"🤖 <b>Bot aktif!</b>\nHer {INTERVAL}sn EN+IT kontrol.\n🔗 <a href=\"{URLs[0]}\">Sayfa</a>")
 
     while True:
         kontrol()
