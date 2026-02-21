@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 # ── Config ──
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8575472491:AAGMQ1g34d9tS1TD0rYOw2s2r0WRlunIt8M")
-CHAT_ID   = os.environ.get("CHAT_ID", "7097055241")  # veya "@kanal_adi"
+CHAT_ID   = os.environ.get("CHAT_ID", "@Cent")  # veya "@kanal_adi"
 URLs = [
     "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese",   # EN
     "https://testcisia.it/calendario.php?tolc=cents&lingua=italiano",  # IT
@@ -140,11 +140,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     log.info("Flask başladı — port %d", port)
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-
-    while True:
-        kontrol()
-        time.sleep(INTERVAL)
-
-
-if __name__ == "__main__":
-    main()
