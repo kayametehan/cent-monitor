@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import traceback
+import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -16,6 +17,7 @@ UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED"}
 already_notified = set()
 subscribers = set()
 monitoring = True
+start_time = None
 
 
 def main_menu():
@@ -166,10 +168,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if action == 'check':
+            # only attempt to edit the existing message; do NOT send a new message
             try:
                 await query.edit_message_text('🔍 Kontrol ediliyor...', parse_mode='HTML')
             except Exception:
-                pass
+                # can't edit — notify user client-side without sending new message
+                try:
+                    await query.answer(text='Güncelleme yapılamadı (mesaj düzenlenemedi).', show_alert=False)
+                except Exception:
+                    pass
+                return
 
             results = check_seats()
             if not results:
@@ -194,26 +202,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await query.edit_message_text(text, parse_mode='HTML', reply_markup=main_menu())
             except Exception:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML', reply_markup=main_menu())
+                try:
+                    await query.answer(text='Güncelleme yapılamadı (mesaj düzenlenemedi).', show_alert=False)
+                except Exception:
+                    pass
+                return
 
         elif action == 'status':
             st = '▶️ Aktif' if monitoring else '⏸ Durduruldu'
+            # uptime hesapla
+            if start_time:
+                uptime_seconds = int(time.time() - start_time)
+                hours, rem = divmod(uptime_seconds, 3600)
+                minutes, seconds = divmod(rem, 60)
+                uptime_str = f"{hours}h {minutes}m {seconds}s"
+            else:
+                uptime_str = 'bilinmiyor'
+
             text = (
                 f"📊 <b>Bot Durumu</b>\n\n"
                 f"Takip: {st}\n"
                 f"Kontrol aralığı: {CHECK_INTERVAL}sn\n"
+                f"Çalışma süresi: {uptime_str}\n"
                 f"Abone sayısı: {len(subscribers)}\n"
                 f"Bildirim sayısı: {len(already_notified)}"
             )
             try:
                 await query.edit_message_text(text, parse_mode='HTML', reply_markup=main_menu())
             except Exception:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML', reply_markup=main_menu())
+                try:
+                    await query.answer(text='Güncelleme yapılamadı (mesaj düzenlenemedi).', show_alert=False)
+                except Exception:
+                    pass
+                return
 
     except Exception as e:
         print(f"[HATA] button: {traceback.format_exc()}")
         try:
-            await context.bot.send_message(chat_id=chat_id, text=f"❌ Hata: {e}", reply_markup=main_menu())
+            await query.answer(text=f"❌ Hata oluştu", show_alert=True)
         except Exception:
             pass
 
@@ -223,6 +249,8 @@ def main():
     print('  CENT@HOME Takip Botu')
     print(f'  Kontrol: {CHECK_INTERVAL}sn')
     print('=' * 50)
+    global start_time
+    start_time = time.time()
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
