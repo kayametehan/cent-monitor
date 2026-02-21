@@ -7,7 +7,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 
 # ── Ayarlar ──────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8575472491:AAGMQ1g34d9tS1TD0rYOw2s2r0WRlunIt8M")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "-5039432883")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "120"))
 
 URL = "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese"
@@ -16,6 +15,7 @@ UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED"}
 
 already_notified = set()
 monitoring = True
+subscribers = set()  # /start yapan herkes otomatik abone olur
 
 
 def main_menu():
@@ -80,10 +80,10 @@ def check_seats():
 # ── Otomatik kontrol ─────────────────────────────────────
 async def auto_check(context: ContextTypes.DEFAULT_TYPE):
     global monitoring
-    if not monitoring:
+    if not monitoring or not subscribers:
         return
 
-    print("[*] Otomatik kontrol...")
+    print(f"[*] Otomatik kontrol... ({len(subscribers)} abone)")
     try:
         results = check_seats()
     except Exception as e:
@@ -109,13 +109,15 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
             f"💺 Kalan yer: {r['seats']}\n\n"
             f"🔗 <a href='{URL}'>Hemen kayıt ol!</a>"
         )
-        try:
-            await context.bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID, text=msg,
-                parse_mode="HTML", reply_markup=main_menu()
-            )
-        except Exception as e:
-            print(f"[HATA] Mesaj gonderilemedi: {e}")
+        # Tüm abonelere gönder
+        for chat_id in list(subscribers):
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id, text=msg,
+                    parse_mode="HTML", reply_markup=main_menu()
+                )
+            except Exception as e:
+                print(f"[HATA] {chat_id} mesaj gonderilemedi: {e}")
 
     if not any(r["available"] for r in results):
         print("[·] Acik yer yok.")
@@ -124,11 +126,17 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
 # ── /start & /menu ───────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    print(f"[INFO] /start geldi, chat_id: {chat_id}")
+    subscribers.add(chat_id)
+    print(f"[INFO] /start → chat_id: {chat_id} (toplam {len(subscribers)} abone)")
     try:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="🤖 <b>CENT@HOME Takip Botu</b>\n\nTuşlarla kontrol et:",
+            text=(
+                "🤖 <b>CENT@HOME Takip Botu</b>\n\n"
+                "✅ Bildirim almaya başladın!\n"
+                "Yer açılınca otomatik mesaj gelecek.\n\n"
+                "Tuşlarla kontrol et:"
+            ),
             parse_mode="HTML",
             reply_markup=main_menu()
         )
@@ -141,7 +149,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global monitoring
     query = update.callback_query
 
-    # Hemen answer() — yoksa Telegram "yükleniyor" gösterir
     try:
         await query.answer()
     except Exception:
@@ -149,6 +156,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     action = query.data
     chat_id = query.message.chat_id
+    subscribers.add(chat_id)
 
     try:
         if action == "check":
@@ -198,6 +206,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📊 <b>Bot Durumu</b>\n\n"
                 f"Takip: {st}\n"
                 f"Kontrol aralığı: {CHECK_INTERVAL}sn\n"
+                f"Abone sayısı: {len(subscribers)}\n"
                 f"Bildirim sayısı: {len(already_notified)}"
             )
             try:
@@ -216,7 +225,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     print("=" * 50)
     print("  CENT@HOME Takip Botu")
-    print(f"  Chat ID: {TELEGRAM_CHAT_ID}")
     print(f"  Kontrol: {CHECK_INTERVAL}sn")
     print("=" * 50)
 
