@@ -2,6 +2,8 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import traceback
+import time
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -14,6 +16,10 @@ UNAVAILABLE = {"NOT LONGER AVAILABLE", "BOOKINGS CLOSED", "ENDED", "NO SEATS", "
 
 already_notified = set()
 subscribers = set()
+start_time = time.time()
+last_manual_check = None
+last_auto_check = None
+last_positive = None
 
 
 def main_menu():
@@ -71,10 +77,29 @@ def check_seats():
     return results
 
 
+def format_time(ts):
+    if not ts:
+        return "-"
+    return datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M:%S")
+
+
+def format_duration(seconds):
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    d, h = divmod(h, 24)
+    if d > 0:
+        return f"{d}g {h}sa {m}dk"
+    elif h > 0:
+        return f"{h}sa {m}dk"
+    else:
+        return f"{m}dk {s}s"
+
+
 async def auto_check(context: ContextTypes.DEFAULT_TYPE):
+    global last_auto_check, last_positive
     if not subscribers:
         return
-
+    last_auto_check = time.time()
     print(f"[*] Otomatik kontrol... ({len(subscribers)} abone)")
     try:
         results = check_seats()
@@ -87,11 +112,10 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
         if not r["available"]:
             already_notified.discard(key)
             continue
-
         if key in already_notified:
             continue
-
         already_notified.add(key)
+        last_positive = time.time()
         msg = (
             "🟢 <b>CENT@HOME YER AÇILDI!</b>\n\n"
             f"🏫 <b>{r['university']}</b>\n"
@@ -113,6 +137,7 @@ async def auto_check(context: ContextTypes.DEFAULT_TYPE):
     # Olumlu bir şey varsa (state UNAVAILABLE değilse)
     for r in results:
         if r["available"]:
+            last_positive = time.time()
             msg = (
                 "✅ <b>CENT@HOME için olumlu bir durum var!</b>\n\n"
                 f"🏫 <b>{r['university']}</b>\n"
@@ -154,6 +179,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global last_manual_check
     query = update.callback_query
     try:
         await query.answer()
@@ -166,11 +192,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if action == "check":
-            try:
-                await query.edit_message_text("🔍 Kontrol ediliyor...", parse_mode="HTML")
-            except Exception:
-                pass
-
+            last_manual_check = time.time()
             results = check_seats()
             lines = []
             for r in results:
@@ -195,8 +217,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=main_menu())
 
         elif action == "status":
+            uptime = format_duration(time.time() - start_time)
             text = (
                 f"📊 <b>Bot Durumu</b>\n\n"
+                f"Çalışma süresi: {uptime}\n"
+                f"Son manuel kontrol: {format_time(last_manual_check)}\n"
+                f"Son otomatik kontrol: {format_time(last_auto_check)}\n"
+                f"Son olumlu durum: {format_time(last_positive)}\n"
                 f"Abone sayısı: {len(subscribers)}\n"
                 f"Bildirim sayısı: {len(already_notified)}"
             )
