@@ -4,6 +4,7 @@ CEnT@HOME Telegram Monitör
 Her iki dilde (EN + IT) kontrol eder, yer açılırsa bildirim gönderir.
 """
 
+import os
 import time
 import logging
 import threading
@@ -22,15 +23,12 @@ HOME_KEYS = ["CENT@HOME"]
 
 bildirildi = set()
 
-# ── Flask keep-alive (Render free tier uyumasın) ──
+# ── Flask (Render'ın health check'i için) ──
 app = Flask(__name__)
 
 @app.route("/")
 def health():
     return "OK", 200
-
-def keep_alive():
-    app.run(host="0.0.0.0", port=10000, debug=False, use_reloader=False)
 
 
 def telegram(mesaj):
@@ -75,7 +73,6 @@ def satirlari_bul(html):
 
 
 def durum_acik(durum_text):
-    """Durum metninin açık olup olmadığını kontrol et (EN veya IT)"""
     d = durum_text.upper().strip()
     return any(k in d for k in ACIK_KEYS)
 
@@ -111,12 +108,28 @@ def kontrol():
             log.info("🎉 YER AÇIK: %s", s["uni"])
 
 
-def main():
-    # Flask'ı arka planda başlat (Render ping'e cevap versin)
-    threading.Thread(target=keep_alive, daemon=True).start()
-
-    log.info("Bot başladı — %d saniyede bir kontrol (EN + IT)", INTERVAL)
+def monitor_loop():
+    """Arka planda çalışan monitör döngüsü"""
+    time.sleep(2)  # Flask'ın ayağa kalkmasını bekle
+    log.info("Monitör başladı — %d saniyede bir kontrol (EN + IT)", INTERVAL)
     telegram(f"🤖 <b>Bot aktif!</b>\nHer {INTERVAL}sn EN+IT kontrol.\n🔗 <a href=\"{URLs[0]}\">Sayfa</a>")
+
+    while True:
+        try:
+            kontrol()
+        except Exception as e:
+            log.error("Kontrol hatası: %s", e)
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    # Monitörü arka plan thread'inde başlat
+    threading.Thread(target=monitor_loop, daemon=True).start()
+
+    # Flask ana thread'de çalışsın (Render bunu bekliyor)
+    port = int(os.environ.get("PORT", 10000))
+    log.info("Flask başladı — port %d", port)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
     while True:
         kontrol()
