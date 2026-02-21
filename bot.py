@@ -6,7 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # ── Ayarlar ──────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8575472491:AAGMQ1g34d9tS1TD0rYOw2s2r0WRlunIt8M")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8575472491:AAGWObpNHaSDAFr0uofwyKRuePGm76nwiHY")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "120"))
 
 URL = "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese"
