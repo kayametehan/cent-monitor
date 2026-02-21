@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 
 # ── Ayarlar ──────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8575472491:AAGMQ1g34d9tS1TD0rYOw2s2r0WRlunIt8M")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "7097055241")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "-5039432883")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "120"))  # saniye
 
 URL = "https://testcisia.it/calendario.php?tolc=cents&lingua=inglese"
